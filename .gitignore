@@ -30,3 +30,5 @@ model/*.pt
 .idea/
 *.swp
 *.swo
+.vercel
+.env*
