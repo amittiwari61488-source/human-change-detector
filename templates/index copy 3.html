@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geospatial Change Detection - Dual Mode</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            /* Advanced Dark Theme Palette */
+            --bg-base: #0f172a;
+            --panel-bg: #1e293b;
+            --panel-border: #334155;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --accent: #0ea5e9;
+            --success: #10b981;
+            --success-bg: rgba(16, 185, 129, 0.15);
+            --danger: #ef4444;
+            --danger-bg: rgba(239, 68, 68, 0.15);
+            --warning: #f59e0b;
+            --warning-bg: rgba(245, 158, 11, 0.15);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --input-bg: #0f172a;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            overflow-x: hidden;
+        }
+
+        /* Nav Tabs */
+        .tab-btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            background-color: var(--primary);
+            color: white;
+        }
+        .tab-btn.inactive {
+            background-color: transparent;
+            color: var(--text-muted);
+        }
+        .tab-btn.inactive:hover {
+            color: var(--text-main);
+            background-color: rgba(255,255,255,0.05);
+        }
+
+        /* Map Mode specific */
+        #map { height: 400px; width: 100%; border-radius: 0.5rem; z-index: 1;}
+        .loader { border-top-color: #3498db; animation: spinner 1.5s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Manual Mode Custom Panels */
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .panel-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--panel-border);
+            background: rgba(15, 23, 42, 0.4);
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .panel-body { padding: 16px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+
+        /* Chat UI */
+        .chat-container { flex: 1; display: flex; flex-direction: column; border: 1px solid var(--panel-border); border-radius: 8px; background: var(--input-bg); min-height: 250px; }
+        #chatHistory, #mapChatHistory { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+        .chat-bubble { padding: 10px 14px; border-radius: 8px; max-width: 85%; line-height: 1.4; word-wrap: break-word; }
+        .chat-user { background: var(--primary); color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
+        .chat-bot { background: var(--panel-bg); border: 1px solid var(--panel-border); color: var(--text-main); align-self: flex-start; border-bottom-left-radius: 2px; }
+        .chat-input-area { display: flex; padding: 8px; background: var(--panel-bg); border-top: 1px solid var(--panel-border); gap: 8px; }
+        .chat-input-area input { flex: 1; background: var(--input-bg); border: 1px solid var(--panel-border); color: var(--text-main); padding: 10px; border-radius: 6px; font-size: 13px; outline: none; }
+        .chat-input-area button { background: var(--accent); border: none; border-radius: 6px; color: white; padding: 0 16px; cursor: pointer; font-weight: 600; }
+
+        /* Table & Visualization */
+        .table-container { flex: 1; overflow-y: auto; border: 1px solid var(--panel-border); border-radius: 8px; background: var(--input-bg); }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { position: sticky; top: 0; background: var(--panel-bg); color: var(--text-muted); font-size: 11px; text-transform: uppercase; padding: 12px; border-bottom: 1px solid var(--panel-border); z-index: 1; }
+        td { padding: 12px; font-size: 13px; border-bottom: 1px solid var(--panel-border); color: var(--text-main); }
+        .severity { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-align: center; display: inline-block; }
+        .sev-high { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+        .sev-med { background: var(--warning-bg); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
+        .sev-low { background: var(--success-bg); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .btn-export { background: transparent; border: 1px solid var(--success); color: var(--success); padding: 12px; text-align: center; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; transition: 0.2s; display: block; }
+        .btn-export.disabled { opacity: 0.5; pointer-events: none; border-color: var(--text-muted); color: var(--text-muted); }
+        .btn-export:not(.disabled):hover { background: var(--success); color: white; }
+        
+        .file-input-wrapper { border: 1px dashed var(--panel-border); border-radius: 8px; padding: 12px; text-align: center; background: var(--input-bg); position: relative; }
+        .file-input-wrapper input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+        
+        .dark-card { background-color: var(--panel-bg); border: 1px solid var(--panel-border); }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <!-- Header & Navigation -->
+    <div class="max-w-7xl mx-auto mb-6 flex flex-col md:flex-row justify-between items-center bg-slate-800 p-4 rounded-lg shadow-lg border border-slate-700">
+        <h1 class="text-2xl font-bold text-white mb-4 md:mb-0 flex items-center gap-2">
+            🛰️ <span class="text-blue-400">Geospatial AI Engine</span>
+        </h1>
+        <div class="flex space-x-2 bg-slate-900 p-1 rounded-lg">
+            <button id="nav-map-btn" class="tab-btn active">Map Mode</button>
+            <button id="nav-manual-btn" class="tab-btn inactive">Manual Mode</button>
+        </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- MAP MODE CONTAINER                             -->
+    <!-- ============================================== -->
+    <div id="map-mode-container" class="max-w-7xl mx-auto dark-card rounded-lg shadow-lg p-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Map Section -->
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-slate-300 mb-2">1. Select Area of Interest (Centered at PSIT Kanpur)</label>
+                <div id="map" class="border border-slate-600"></div>
+                
+                <div class="mt-4 flex flex-col space-y-2">
+                    <span id="area-info" class="text-sm font-semibold text-slate-400">Selected Area: 0.0 km²</span>
+                    <span id="time-estimate" class="text-sm font-medium text-blue-400"></span>
+                    <span id="warning-msg" class="text-sm font-bold text-red-400"></span>
+                </div>
+            </div>
+
+            <!-- Controls Section -->
+            <div class="bg-slate-900 p-4 rounded border border-slate-700">
+                <label class="block text-sm font-medium text-slate-300 mb-2">2. Set Timeframes</label>
+                <div class="mb-4">
+                    <label class="text-xs text-slate-500">Time 1 (Baseline)</label>
+                    <input type="text" id="t1-date" value="2024-06-01/2024-08-31" class="w-full mt-1 p-2 bg-slate-800 border border-slate-600 rounded text-sm text-white">
+                </div>
+                <div class="mb-6">
+                    <label class="text-xs text-slate-500">Time 2 (Current - Latest)</label>
+                    <input type="text" id="t2-date" value="2026-06-01/2026-08-18" class="w-full mt-1 p-2 bg-slate-800 border border-slate-600 rounded text-sm text-white">
+                </div>
+
+                <button id="submit-btn" disabled class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded disabled:bg-slate-600 disabled:cursor-not-allowed hover:bg-blue-700 transition">
+                    Run Analysis
+                </button>
+
+                <div id="progress-container" class="mt-6 hidden">
+                    <div class="flex justify-between text-xs font-medium text-slate-400 mb-1">
+                        <span id="status-text">⚙️ Initializing...</span>
+                        <span id="progress-percent">0%</span>
+                    </div>
+                    <div class="w-full bg-slate-700 rounded-full h-2.5">
+                        <div id="progress-bar" class="bg-blue-500 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <hr class="border-slate-700 my-6">
+
+                <!-- Copilot for Map Mode -->
+                <div class="text-xs font-semibold text-slate-400 mb-2">GEOSPATIAL COPILOT</div>
+                <div class="chat-container">
+                    <div id="mapChatHistory">
+                        <div class="chat-bubble chat-bot">Hello! Run a map analysis, then ask me to summarize the violations or assess severity.</div>
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" id="mapCopilotInput" placeholder="Ask Groq AI...">
+                        <button type="button" id="mapCopilotSendBtn">Ask</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results" class="mt-8 hidden">
+            <!-- Map Mode PDF Export -->
+            <div class="flex justify-between items-center border-b border-slate-700 mb-4 pb-2">
+                <h2 class="text-2xl font-bold text-white">Full Scene Overview (Changes Highlighted)</h2>
+                <a href="/api/download-pdf" class="btn-export" target="_blank">📥 Export PDF Report</a>
+            </div>
+
+            <div id="full-images-container" class="mb-8 hidden">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div>
+                        <h3 class="font-semibold text-center mb-2 text-slate-300">Time 1 (Baseline)</h3>
+                        <img id="t1-full-img" src="" class="w-full rounded border border-slate-600 shadow" alt="T1 Full Scene">
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-center mb-2 text-slate-300">Time 2 (Current)</h3>
+                        <img id="t2-full-img" src="" class="w-full rounded border border-slate-600 shadow" alt="T2 Full Scene">
+                    </div>
+                </div>
+            </div>
+
+            <h2 class="text-2xl font-bold mb-4 border-b border-slate-700 pb-2 text-white">Detected Change Regions</h2>
+            <div id="events-container" class="grid grid-cols-1 lg:grid-cols-2 gap-4"></div>
+        </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- MANUAL MODE CONTAINER                          -->
+    <!-- ============================================== -->
+    <div id="manual-mode-container" class="max-w-7xl mx-auto hidden h-[calc(100vh-120px)]">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full">
+            
+            <!-- LEFT PANEL: Controls & AI -->
+            <div class="panel">
+                <div class="panel-header">Data Ingestion & AI</div>
+                <div class="panel-body">
+                    <form id="uploadForm" class="flex flex-col gap-4">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="file-input-wrapper">
+                                <label class="text-xs font-bold text-slate-400 block mb-2">T1: PRE-CHANGE</label>
+                                <input type="file" id="pre_image" accept="image/*" required>
+                                <img id="prePreview" class="w-full h-[60px] object-cover rounded hidden border border-slate-600">
+                                <div id="preText" class="text-xs text-slate-500 mt-1">Click to browse</div>
+                            </div>
+                            <div class="file-input-wrapper">
+                                <label class="text-xs font-bold text-slate-400 block mb-2">T2: POST-CHANGE</label>
+                                <input type="file" id="post_image" accept="image/*" required>
+                                <img id="postPreview" class="w-full h-[60px] object-cover rounded hidden border border-slate-600">
+                                <div id="postText" class="text-xs text-slate-500 mt-1">Click to browse</div>
+                            </div>
+                        </div>
+                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg flex justify-center items-center gap-2 transition" id="manualSubmitBtn">
+                            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            Run Detection Engine
+                        </button>
+                    </form>
+
+                    <hr class="border-slate-700 my-2">
+                    
+                    <div class="text-xs font-semibold text-slate-400 mb-[-8px]">GEOSPATIAL COPILOT</div>
+                    <div class="chat-container">
+                        <div id="manualChatHistory">
+                            <div class="chat-bubble chat-bot">Hello! Upload pre/post imagery above. Once analyzed, ask me to summarize violations or assess severity.</div>
+                        </div>
+                        <div class="chat-input-area">
+                            <input type="text" id="manualCopilotInput" placeholder="Ask Groq AI...">
+                            <button type="button" id="manualCopilotSendBtn">Ask</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CENTER PANEL: Visualization -->
+            <div class="panel">
+                <div class="panel-header">
+                    Spatial Analysis
+                    <span class="bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-xs font-bold" id="eventBadge">0 Violations</span>
+                </div>
+                <div class="panel-body p-0 relative flex justify-center items-center bg-slate-900 border border-slate-700 rounded-lg overflow-hidden m-4" style="background-image: radial-gradient(#334155 1px, transparent 1px); background-size: 20px 20px;">
+                    <div class="text-center text-slate-500 text-sm z-10" id="imagePlaceholder">
+                        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <p>Awaiting satellite telemetry...</p>
+                    </div>
+                    <img id="annotatedImg" src="" class="max-w-full max-h-full object-contain hidden z-20 absolute inset-0 m-auto" alt="Annotated Overview">
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: Data Logs -->
+            <div class="panel">
+                <div class="panel-header">Violation Logs</div>
+                <div class="panel-body">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Class</th>
+                                    <th>Severity</th>
+                                </tr>
+                            </thead>
+                            <tbody id="eventsBody">
+                                <tr>
+                                    <td colspan="3" class="text-center text-slate-500 py-8">
+                                        No data available.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <a href="/api/download-pdf" class="btn-export disabled" id="downloadPdfBtn" target="_blank">
+                        📥 Export Official PDF Report
+                    </a>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Leaflet Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    
+    <script>
+        // ==========================================
+        // TAB SWITCHING LOGIC
+        // ==========================================
+        const mapBtn = document.getElementById('nav-map-btn');
+        const manualBtn = document.getElementById('nav-manual-btn');
+        const mapContainer = document.getElementById('map-mode-container');
+        const manualContainer = document.getElementById('manual-mode-container');
+
+        mapBtn.addEventListener('click', () => {
+            mapBtn.classList.replace('inactive', 'active');
+            manualBtn.classList.replace('active', 'inactive');
+            mapContainer.classList.remove('hidden');
+            manualContainer.classList.add('hidden');
+            setTimeout(() => { map.invalidateSize(); }, 200);
+        });
+
+        manualBtn.addEventListener('click', () => {
+            manualBtn.classList.replace('inactive', 'active');
+            mapBtn.classList.replace('active', 'inactive');
+            manualContainer.classList.remove('hidden');
+            mapContainer.classList.add('hidden');
+        });
+
+        // ==========================================
+        // MAP MODE LOGIC
+        // ==========================================
+        const map = L.map('map').setView([26.4495405, 80.1925059], 14);
+        // L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(map); // Using dark map to fit theme
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(map);
+
+        const drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+        const drawControl = new L.Control.Draw({
+            edit: { featureGroup: drawnItems },
+            draw: { polygon: false, polyline: false, circle: false, marker: false, circlemarker: false }
+        });
+        map.addControl(drawControl);
+
+        let currentBbox = null;
+        let estimatedSeconds = 30;
+
+        function getBBoxAreaKm2(bbox) {
+            const [minLon, minLat, maxLon, maxLat] = bbox;
+            const latDist = (maxLat - minLat) * 111; 
+            const lonDist = (maxLon - minLon) * 111 * Math.cos(((minLat + maxLat) / 2) * (Math.PI / 180));
+            return Math.abs(latDist * lonDist);
+        }
+
+        async function updateEstimate() {
+            if (!currentBbox) return;
+            const t1 = document.getElementById('t1-date').value;
+            const t2 = document.getElementById('t2-date').value;
+            try {
+                const res = await fetch('/api/estimate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bbox: currentBbox, t1_date: t1, t2_date: t2 })
+                });
+                const data = await res.json();
+                estimatedSeconds = data.estimated_seconds || 30;
+                document.getElementById('time-estimate').innerText = `⏱️ Estimated time: ~${estimatedSeconds} seconds`;
+            } catch(e) { console.error("Estimate failed", e); }
+        }
+
+        map.on(L.Draw.Event.CREATED, function (e) {
+            drawnItems.clearLayers();
+            const layer = e.layer;
+            drawnItems.addLayer(layer);
+            
+            const bounds = layer.getBounds();
+            currentBbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+            
+            const area = getBBoxAreaKm2(currentBbox);
+            document.getElementById('area-info').innerText = `Selected Area: ${area.toFixed(2)} km²`;
+            
+            const btn = document.getElementById('submit-btn');
+            const warning = document.getElementById('warning-msg');
+
+            if (area > 500) {
+                btn.disabled = true;
+                warning.innerText = "❌ Area too large (>500 km²). Please select a smaller region.";
+                document.getElementById('time-estimate').innerText = "";
+            } else {
+                btn.disabled = false;
+                warning.innerText = area > 100 ? "⚠️ Large area, might take a moment." : "";
+                document.getElementById('time-estimate').innerText = "⏱️ Calculating estimate...";
+                updateEstimate();
+            }
+        });
+
+        let progressTimer;
+        document.getElementById('submit-btn').addEventListener('click', async () => {
+            if (!currentBbox) return alert("Please draw a bounding box first.");
+
+            const btn = document.getElementById('submit-btn');
+            const progContainer = document.getElementById('progress-container');
+            const progBar = document.getElementById('progress-bar');
+            const statusTxt = document.getElementById('status-text');
+            const percentTxt = document.getElementById('progress-percent');
+            const resultsDiv = document.getElementById('results');
+            const eventsContainer = document.getElementById('events-container');
+            const fullImagesContainer = document.getElementById('full-images-container');
+
+            btn.disabled = true;
+            resultsDiv.classList.add('hidden');
+            fullImagesContainer.classList.add('hidden');
+            eventsContainer.innerHTML = '';
+            progContainer.classList.remove('hidden');
+            
+            let elapsed = 0;
+            progBar.style.width = "0%";
+            progressTimer = setInterval(() => {
+                elapsed += 0.5;
+                let percentage = Math.min(Math.round((elapsed / estimatedSeconds) * 100), 95);
+                progBar.style.width = percentage + "%";
+                percentTxt.innerText = percentage + "%";
+                statusTxt.innerText = `⚙️ Processing STAC data... (${Math.floor(elapsed)}s / ~${estimatedSeconds}s)`;
+            }, 500);
+
+            const payload = { bbox: currentBbox, t1_date: document.getElementById('t1-date').value, t2_date: document.getElementById('t2-date').value };
+
+            try {
+                const response = await fetch('/api/detect-satellite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                
+                clearInterval(progressTimer);
+                progBar.style.width = "100%";
+                percentTxt.innerText = "100%";
+                statusTxt.innerText = "✅ Done!";
+
+                if (data.status === "error") { alert("Error: " + data.error); return; }
+
+                resultsDiv.classList.remove('hidden');
+                if (data.t1_full_url && data.t2_full_url) {
+                    document.getElementById('t1-full-img').src = data.t1_full_url;
+                    document.getElementById('t2-full-img').src = data.t2_full_url;
+                    fullImagesContainer.classList.remove('hidden');
+                }
+                
+                if (data.events_count === 0) {
+                    eventsContainer.innerHTML = '<p class="text-slate-400 italic">No significant changes detected in this area.</p>';
+                    return;
+                }
+
+                data.events.forEach(ev => {
+                    const card = document.createElement('div');
+                    card.className = "dark-card rounded-lg p-4 shadow-sm text-white";
+                    let badgeColor = ev.severity === "HIGH" ? "bg-red-500/20 text-red-400 border border-red-500/30" : 
+                                     ev.severity === "MEDIUM" ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30" : 
+                                     "bg-green-500/20 text-green-400 border border-green-500/30";
+
+                    card.innerHTML = `
+                        <div class="flex justify-between items-center mb-3">
+                            <div>
+                                <h3 class="font-bold text-lg">Event #${ev.id}</h3>
+                                <p class="text-xs text-slate-400">${ev.lat.toFixed(5)}, ${ev.lon.toFixed(5)}</p>
+                            </div>
+                            <span class="text-xs font-bold px-2 py-1 rounded ${badgeColor}">${ev.severity}</span>
+                        </div>
+                        <p class="text-sm font-medium mb-1">Type: <span class="text-blue-300">${ev.activity_type}</span></p>
+                        <p class="text-sm text-slate-400 mb-3">Area: ${ev.area_sq_m} m² | Confidence: ${ev.confidence}%</p>
+                        <div class="flex space-x-2">
+                            <div class="w-1/2 text-center">
+                                <span class="text-xs font-semibold text-slate-400">T1 (Baseline)</span>
+                                <img src="${ev.t1_patch}" class="w-full rounded border border-slate-600 mt-1" alt="T1">
+                            </div>
+                            <div class="w-1/2 text-center">
+                                <span class="text-xs font-semibold text-slate-400">T2 (Current)</span>
+                                <img src="${ev.t2_patch}" class="w-full rounded border border-slate-600 mt-1" alt="T2">
+                            </div>
+                        </div>
+                    `;
+                    eventsContainer.appendChild(card);
+                });
+
+                document.getElementById('mapChatHistory').innerHTML += `<div class="chat-bubble chat-bot">✅ Map scan complete! Detected <b>${data.events_count}</b> events. What would you like to know about them?</div>`;
+
+            } catch (error) {
+                clearInterval(progressTimer);
+                statusTxt.innerText = "❌ Request Failed";
+                alert("A network error occurred. Check the backend logs.");
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+
+        // ==========================================
+        // MANUAL MODE LOGIC
+        // ==========================================
+        function setupImagePreview(inputId, previewId, textId) {
+            const input = document.getElementById(inputId);
+            const preview = document.getElementById(previewId);
+            const text = document.getElementById(textId);
+            input.addEventListener('change', function(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        preview.src = e.target.result;
+                        preview.classList.remove('hidden');
+                        text.classList.add('hidden');
+                    }
+                    reader.readAsDataURL(file);
+                } else {
+                    preview.src = '';
+                    preview.classList.add('hidden');
+                    text.classList.remove('hidden');
+                }
+            });
+        }
+
+        setupImagePreview('pre_image', 'prePreview', 'preText');
+        setupImagePreview('post_image', 'postPreview', 'postText');
+
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append('pre_image', document.getElementById('pre_image').files[0]);
+            formData.append('post_image', document.getElementById('post_image').files[0]);
+
+            const submitBtn = document.getElementById('manualSubmitBtn');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.innerHTML = '⚙️ Analyzing Imagery...';
+            submitBtn.disabled = true;
+
+            try {
+                const response = await fetch('/api/detect', { method: 'POST', body: formData });
+                const data = await response.json();
+
+                if(data.status === 'success') {
+                    document.getElementById('eventBadge').innerText = `${data.events_count} Violations`;
+                    document.getElementById('imagePlaceholder').style.display = 'none';
+                    const img = document.getElementById('annotatedImg');
+                    img.src = data.annotated_image;
+                    img.classList.remove('hidden');
+
+                    document.getElementById('downloadPdfBtn').classList.remove('disabled');
+
+                    const tbody = document.getElementById('eventsBody');
+                    tbody.innerHTML = '';
+
+                    // FIX: Implemented logic to render individual patches within the log table
+                    if(data.events.length === 0) {
+                        tbody.innerHTML = `<tr><td colspan="3" class="text-center text-slate-500 py-4">No violations detected.</td></tr>`;
+                    } else {
+                        data.events.forEach(event => {
+                            const sev = (event.severity || event.Severity || 'LOW').toUpperCase();
+                            let sevClass = 'sev-low';
+                            if(sev === 'HIGH' || sev === 'CRITICAL') sevClass = 'sev-high';
+                            if(sev === 'MEDIUM') sevClass = 'sev-med';
+
+                            let patchesHtml = '';
+                            if (event.t1_patch && event.t2_patch) {
+                                patchesHtml = `
+                                <div class="flex space-x-2 mt-3">
+                                    <div class="w-1/2 text-center">
+                                        <span class="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Pre-Change</span>
+                                        <img src="${event.t1_patch}" class="w-full rounded border border-slate-600 mt-1 shadow-sm">
+                                    </div>
+                                    <div class="w-1/2 text-center">
+                                        <span class="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Post-Change</span>
+                                        <img src="${event.t2_patch}" class="w-full rounded border border-slate-600 mt-1 shadow-sm">
+                                    </div>
+                                </div>`;
+                            }
+
+                            tbody.innerHTML += `
+                                <tr>
+                                    <td class="font-mono text-xs align-top pt-4">#${event.id || event.ID || '-'}</td>
+                                    <td class="align-top pt-4 pb-4">
+                                        <div class="font-semibold text-blue-300 text-sm">${event.activity_type || event.Type || '-'}</div>
+                                        <div class="text-[11px] text-slate-400 mt-1">Confidence: ${event.confidence || event.Confidence || '-'}% &nbsp;|&nbsp; Area: ${event.area_sq_m || event.Area || '-'}m²</div>
+                                        ${patchesHtml}
+                                    </td>
+                                    <td class="align-top pt-4"><span class="severity ${sevClass} shadow-sm">${sev}</span></td>
+                                </tr>
+                            `;
+                        });
+                    }
+
+                    const chatHistory = document.getElementById('manualChatHistory');
+                    chatHistory.innerHTML += `<div class="chat-bubble chat-bot">✅ AI scan complete! Detected <b>${data.events_count}</b> events. What would you like to know about them?</div>`;
+                    chatHistory.scrollTop = chatHistory.scrollHeight;
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error occurred'));
+                }
+            } catch (err) {
+                alert('Failed to connect to backend server.');
+                console.error(err);
+            } finally {
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+            }
+        });
+
+
+        // ==========================================
+        // COPILOT LOGIC (SHARED)
+        // ==========================================
+        async function sendCopilotQuery(inputId, historyId) {
+            const inputField = document.getElementById(inputId);
+            const chatHistory = document.getElementById(historyId);
+            const query = inputField.value.trim();
+            if (!query) return;
+
+            chatHistory.innerHTML += `<div class="chat-bubble chat-user">${escapeHtml(query)}</div>`;
+            inputField.value = '';
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            const loadingId = 'loading-' + Date.now();
+            chatHistory.innerHTML += `<div id="${loadingId}" class="chat-bubble chat-bot" style="opacity: 0.7;">Processing request...</div>`;
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            try {
+                const response = await fetch('/api/copilot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query })
+                });
+                const data = await response.json();
+
+                document.getElementById(loadingId).remove();
+                chatHistory.innerHTML += `<div class="chat-bubble chat-bot">${escapeHtml(data.response)}</div>`;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            } catch (err) {
+                document.getElementById(loadingId).remove();
+                chatHistory.innerHTML += `<div class="chat-bubble chat-bot text-red-400">❌ Connection error to Groq Copilot.</div>`;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }
+        }
+
+        document.getElementById('mapCopilotSendBtn').addEventListener('click', () => sendCopilotQuery('mapCopilotInput', 'mapChatHistory'));
+        document.getElementById('mapCopilotInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') sendCopilotQuery('mapCopilotInput', 'mapChatHistory'); });
+        
+        document.getElementById('manualCopilotSendBtn').addEventListener('click', () => sendCopilotQuery('manualCopilotInput', 'manualChatHistory'));
+        document.getElementById('manualCopilotInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') sendCopilotQuery('manualCopilotInput', 'manualChatHistory'); });
+
+        function escapeHtml(text) {
+            const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+    </script>
+</body>
+</html>

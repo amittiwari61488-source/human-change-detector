@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geospatial Change Detection</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <style>
+        #map { height: 400px; width: 100%; border-radius: 0.5rem; }
+        .loader { border-top-color: #3498db; -webkit-animation: spinner 1.5s linear infinite; animation: spinner 1.5s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100 p-8 font-sans">
+    <div class="max-w-6xl mx-auto bg-white rounded-lg shadow-lg p-6">
+        <h1 class="text-3xl font-bold mb-6 text-gray-800">Satellite Change Detection</h1>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Map Section -->
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-2">1. Select Area of Interest (Centered at PSIT Kanpur)</label>
+                <div id="map" class="border border-gray-300"></div>
+                
+                <div class="mt-4 flex flex-col space-y-2">
+                    <span id="area-info" class="text-sm font-semibold text-gray-600">Selected Area: 0.0 km²</span>
+                    <span id="time-estimate" class="text-sm font-medium text-blue-600"></span>
+                    <span id="warning-msg" class="text-sm font-bold text-red-500"></span>
+                </div>
+            </div>
+
+            <!-- Controls Section -->
+            <div class="bg-gray-50 p-4 rounded border border-gray-200">
+                <label class="block text-sm font-medium text-gray-700 mb-2">2. Set Timeframes</label>
+
+                <div class="mb-4">
+                    <label class="text-xs text-gray-500">Time 1 (Baseline)</label>
+                    <input type="text" id="t1-date" value="2024-06-01/2024-08-31" class="w-full mt-1 p-2 border rounded text-sm">
+                </div>
+                
+                <div class="mb-6">
+                    <label class="text-xs text-gray-500">Time 2 (Current - Latest)</label>
+                    <input type="text" id="t2-date" value="2026-06-01/2026-08-18" class="w-full mt-1 p-2 border rounded text-sm">
+                </div>
+
+                <button id="submit-btn" disabled class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded disabled:bg-gray-400 disabled:cursor-not-allowed hover:bg-blue-700 transition">
+                    Run Analysis
+                </button>
+
+                <!-- Progress Bar (Hidden by default) -->
+                <div id="progress-container" class="mt-6 hidden">
+                    <div class="flex justify-between text-xs font-medium text-gray-700 mb-1">
+                        <span id="status-text">⚙️ Initializing...</span>
+                        <span id="progress-percent">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results" class="mt-8 hidden">
+            <h2 class="text-2xl font-bold mb-4 border-b pb-2">Detected Changes</h2>
+            <div id="events-container" class="grid grid-cols-1 lg:grid-cols-2 gap-4"></div>
+        </div>
+    </div>
+
+    <!-- Leaflet Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    
+    <script>
+        // 1. Initialize Map centered on PSIT Kanpur (Latitude: 26.398, Longitude: 80.233)
+        const map = L.map('map').setView([26.4495405, 80.1925059], 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+        // 2. Setup Drawing Tools
+        const drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+        const drawControl = new L.Control.Draw({
+            edit: { featureGroup: drawnItems },
+            draw: { polygon: false, polyline: false, circle: false, marker: false, circlemarker: false }
+        });
+        map.addControl(drawControl);
+
+        let currentBbox = null;
+        let estimatedSeconds = 30; // default
+
+        function getBBoxAreaKm2(bbox) {
+            const [minLon, minLat, maxLon, maxLat] = bbox;
+            const latDist = (maxLat - minLat) * 111; 
+            const lonDist = (maxLon - minLon) * 111 * Math.cos(((minLat + maxLat) / 2) * (Math.PI / 180));
+            return Math.abs(latDist * lonDist);
+        }
+
+        async function updateEstimate() {
+            if (!currentBbox) return;
+            
+            const t1 = document.getElementById('t1-date').value;
+            const t2 = document.getElementById('t2-date').value;
+
+            try {
+                const res = await fetch('/api/estimate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bbox: currentBbox, t1_date: t1, t2_date: t2 })
+                });
+                const data = await res.json();
+                estimatedSeconds = data.estimated_seconds || 30;
+                document.getElementById('time-estimate').innerText = `⏱️ Estimated time: ~${estimatedSeconds} seconds`;
+            } catch(e) {
+                console.error("Estimate failed", e);
+            }
+        }
+
+        map.on(L.Draw.Event.CREATED, function (e) {
+            drawnItems.clearLayers();
+            const layer = e.layer;
+            drawnItems.addLayer(layer);
+            
+            const bounds = layer.getBounds();
+            currentBbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+            
+            const area = getBBoxAreaKm2(currentBbox);
+            document.getElementById('area-info').innerText = `Selected Area: ${area.toFixed(2)} km²`;
+            
+            const btn = document.getElementById('submit-btn');
+            const warning = document.getElementById('warning-msg');
+
+            if (area > 500) {
+                btn.disabled = true;
+                warning.innerText = "❌ Area too large (>500 km²). Please select a smaller region.";
+                document.getElementById('time-estimate').innerText = "";
+            } else {
+                btn.disabled = false;
+                warning.innerText = area > 100 ? "⚠️ Large area, might take a moment." : "";
+                document.getElementById('time-estimate').innerText = "⏱️ Calculating estimate...";
+                updateEstimate(); // Fetch real estimate from backend
+            }
+        });
+
+        // 3. Handle Form Submission & Progress Bar
+        let progressTimer;
+
+        document.getElementById('submit-btn').addEventListener('click', async () => {
+            if (!currentBbox) return alert("Please draw a bounding box first.");
+
+            const btn = document.getElementById('submit-btn');
+            const progContainer = document.getElementById('progress-container');
+            const progBar = document.getElementById('progress-bar');
+            const statusTxt = document.getElementById('status-text');
+            const percentTxt = document.getElementById('progress-percent');
+            const resultsDiv = document.getElementById('results');
+            const eventsContainer = document.getElementById('events-container');
+
+            // Reset UI
+            btn.disabled = true;
+            resultsDiv.classList.add('hidden');
+            eventsContainer.innerHTML = '';
+            progContainer.classList.remove('hidden');
+            
+            // Start Fake Progress Timer based on Estimate
+            let elapsed = 0;
+            progBar.style.width = "0%";
+            progressTimer = setInterval(() => {
+                elapsed += 0.5;
+                let percentage = Math.min(Math.round((elapsed / estimatedSeconds) * 100), 95);
+                progBar.style.width = percentage + "%";
+                percentTxt.innerText = percentage + "%";
+                statusTxt.innerText = `⚙️ Processing STAC data... (${Math.floor(elapsed)}s / ~${estimatedSeconds}s)`;
+            }, 500);
+
+            const payload = {
+                bbox: currentBbox,
+                t1_date: document.getElementById('t1-date').value,
+                t2_date: document.getElementById('t2-date').value
+            };
+
+            try {
+                const response = await fetch('/api/detect-satellite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await response.json();
+                
+                // Finish Progress Bar
+                clearInterval(progressTimer);
+                progBar.style.width = "100%";
+                percentTxt.innerText = "100%";
+                statusTxt.innerText = "✅ Done!";
+
+                if (data.status === "error") {
+                    alert("Error: " + data.error);
+                    return;
+                }
+
+                // Render Results
+                resultsDiv.classList.remove('hidden');
+                
+                if (data.events_count === 0) {
+                    eventsContainer.innerHTML = '<p class="text-gray-500 italic">No significant changes detected in this area.</p>';
+                    return;
+                }
+
+                data.events.forEach(ev => {
+                    const card = document.createElement('div');
+                    card.className = "bg-white border rounded p-4 shadow-sm";
+                    
+                    let badgeColor = ev.severity === "HIGH" ? "bg-red-100 text-red-800" : 
+                                     ev.severity === "MEDIUM" ? "bg-yellow-100 text-yellow-800" : 
+                                     "bg-green-100 text-green-800";
+
+                    card.innerHTML = `
+                        <div class="flex justify-between items-center mb-3">
+                            <div>
+                                <h3 class="font-bold text-lg">Event #${ev.id}</h3>
+                                <p class="text-xs text-gray-500">${ev.lat.toFixed(5)}, ${ev.lon.toFixed(5)}</p>
+                            </div>
+                            <span class="text-xs font-bold px-2 py-1 rounded ${badgeColor}">${ev.severity}</span>
+                        </div>
+                        <p class="text-sm font-medium mb-1">Type: ${ev.activity_type}</p>
+                        <p class="text-sm text-gray-600 mb-3">Area: ${ev.area_sq_m} m² | Confidence: ${ev.confidence}%</p>
+                        
+                        <div class="flex space-x-2">
+                            <div class="w-1/2 text-center">
+                                <span class="text-xs font-semibold">T1 (Baseline)</span>
+                                <img src="${ev.t1_patch}" class="w-full rounded border mt-1" alt="T1">
+                            </div>
+                            <div class="w-1/2 text-center">
+                                <span class="text-xs font-semibold">T2 (Current)</span>
+                                <img src="${ev.t2_patch}" class="w-full rounded border mt-1" alt="T2">
+                            </div>
+                        </div>
+                    `;
+                    eventsContainer.appendChild(card);
+                });
+
+            } catch (error) {
+                clearInterval(progressTimer);
+                statusTxt.innerText = "❌ Request Failed";
+                alert("A network error occurred. Check the backend logs.");
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

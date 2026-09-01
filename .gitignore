@@ -1,0 +1,32 @@
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# Environment Variables
+.env
+
+# Project Runtime Folders (Ignore contents, keep folders if needed)
+uploads/*
+!uploads/.gitkeep
+saved_images/*
+!saved_images/.gitkeep
+
+# Large AI Model Weights (Downloaded via Google Drive script)
+model/*.pth
+model/*.pt
+*.bin
+*.ckpt
+
+# IDE & Operating System Files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
